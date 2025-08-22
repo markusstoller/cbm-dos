@@ -26,7 +26,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cbm-dos = "0.1"
+cbm-dos = "0.1.1"
 ```
 
 Then import in your code:
