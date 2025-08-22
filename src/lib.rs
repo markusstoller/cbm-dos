@@ -107,14 +107,14 @@ impl GCR {
     ///     decode_mappings: [ /* array mapping 32 possible quintuples to decoded nibbles */ ],
     /// };
     /// let encoded_value = 0x1A2B3C4D5E; // Some encoded value
-    /// let decoded = decoder.decode_quintuple_new(encoded_value);
+    /// let decoded = decoder.decode_quintuple(encoded_value);
     ///
     /// match decoded {
     ///     Some(bytes) => println!("Decoded bytes: {:?}", bytes),
     ///     None => println!("Invalid encoding"),
     /// }
     /// ```
-    fn decode_quintuple_new(&self, encoded_value: u64) -> Option<Vec<u8>> {
+    fn decode_quintuple(&self, encoded_value: u64) -> Option<Vec<u8>> {
         let mut result = Vec::with_capacity(4); // Pre-allocate exact capacity
         let mut current_byte = 0u8;
         let mut is_high_nibble = true; // Start with high nibble for correct order
@@ -149,7 +149,7 @@ impl GCR {
     ///
     /// The `decode` method processes the input in chunks of 5 bytes, converting each chunk into a
     /// 64-bit integer by padding it with three leading zero bytes. It then calls the
-    /// `decode_quintuple_new` method to decode the chunk into a vector of bytes.
+    /// `decode_quintuple` method to decode the chunk into a vector of bytes.
     ///
     /// # Parameters
     /// - `value`: A reference to a slice of bytes (`&[u8]`) that represents the encoded input data.
@@ -174,14 +174,14 @@ impl GCR {
     /// - This method uses `chunks_exact(5)` to divide the input into fixed-size chunks of 5.
     /// - For each chunk, a `u64` is constructed by appending three leading zero bytes to the 5-byte chunk to
     ///   match the byte size of a `u64`.
-    /// - It relies on the `decode_quintuple_new` method to handle the actual decoding logic for
-    ///   each chunk of reconstructed data. If `decode_quintuple_new` returns `None` for any chunk,
+    /// - It relies on the `decode_quintuple` method to handle the actual decoding logic for
+    ///   each chunk of reconstructed data. If `decode_quintuple` returns `None` for any chunk,
     ///   the entire decoding fails and the method returns `None`.
     ///
     /// # Panics
     /// This method does not panic under normal operation. However, improper implementation of
-    /// `decode_quintuple_new` or incorrect input may result in unexpected behavior.
-    pub fn decode(&mut self, value: &[u8]) -> Option<Vec<u8>> {
+    /// `decode_quintuple` or incorrect input may result in unexpected behavior.
+    pub fn decode(&self, value: &[u8]) -> Option<Vec<u8>> {
         let mut result: Vec<u8> = Vec::new();
         // Process chunks more efficiently using exact_chunks
         for chunk in value.chunks_exact(5) {
@@ -190,7 +190,7 @@ impl GCR {
                 chunk[0], chunk[1], chunk[2], chunk[3], chunk[4],
             ]);
 
-            if let Some(res) = self.decode_quintuple_new(final_value) {
+            if let Some(res) = self.decode_quintuple(final_value) {
                 //println!("{:x?}", res);
                 result.extend(res);
             } else {
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn decode_works() {
-        let mut gcr = GCR::new();
+        let gcr = GCR::new();
         let final_data: Vec<u8> = vec![0x52, 0x54, 0xb5, 0x29, 0x4b, 0x9a, 0xa6, 0xa5, 0x29, 0x4a];
         assert_eq!(
             gcr.decode(&final_data).unwrap(),
