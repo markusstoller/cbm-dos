@@ -9,7 +9,7 @@ It converts 8-bit bytes into a stream of 5-bit codes ("quintuples") and back, us
 - Invalid quintuples during decoding cause `decode` to return `None`.
 
 ## Status
-- Version: 0.1.0
+- Version: 0.1.1
 - Rust edition: 2024
 
 ## Why GCR (4-to-5)?
@@ -50,7 +50,7 @@ fn main() {
     assert_eq!(encoded, vec![0x52, 0x54, 0xB5, 0x29, 0x4B, 0x9A, 0xA6, 0xA5, 0x29, 0x4A]);
 
     // Decode back (input length must be a multiple of 5)
-    let mut decoder = GCR::new();
+    let decoder = GCR::new();
     let decoded = decoder.decode(&encoded).expect("valid GCR");
     assert_eq!(decoded, data);
 }
@@ -66,7 +66,7 @@ fn main() {
   - For each 4-byte chunk (8 nibbles), each nibble is mapped to a 5-bit code and packed into a 40-bit big-endian value, emitted as 5 bytes.
   - If `input.len()` is not a multiple of 4, extra bytes at the end are ignored. You should pad your input if you need exact coverage.
 
-- `GCR::decode(&mut self, input: &[u8]) -> Option<Vec<u8>>`
+- `GCR::decode(&self, input: &[u8]) -> Option<Vec<u8>>`
   - Decodes the input in chunks of 5 bytes at a time.
   - Each 5-byte chunk is interpreted as a 40-bit big-endian value composed of 8 quintuples; each quintuple maps back to a 4-bit nibble.
   - Returns `None` if any quintuple in any chunk is invalid.
@@ -113,7 +113,7 @@ The tests in this crate include a round-trip sanity check:
 use cbm_dos::GCR;
 
 fn main() {
-    let mut gcr = GCR::new();
+    let gcr = GCR::new();
     let encoded: Vec<u8> = vec![0x52, 0x54, 0xB5, 0x29, 0x4B, 0x9A, 0xA6, 0xA5, 0x29, 0x4A];
     let decoded = gcr.decode(&encoded).unwrap();
     assert_eq!(decoded, vec![0x08, 0x01, 0x00, 0x01, 0x30, 0x30, 0x00, 0x00]);
@@ -143,4 +143,11 @@ cargo test
 - Does not include disk flux decoding/encoding, sync marks, sector layout, checksums, or higher-level track/sector handling.
 
 ## License
-No explicit license file is provided in the repository at this time. Consult the project owner if you need specific licensing terms.
+Licensed under either of
+- Apache License, Version 2.0
+- MIT license
+at your option.
+
+The declared license for this crate is "MIT OR Apache-2.0" as specified in Cargo.toml. If license text files are not present in the repository, refer to the standard license texts:
+- Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
+- MIT: https://opensource.org/licenses/MIT
