@@ -9,7 +9,7 @@ It converts 8-bit bytes into a stream of 5-bit codes ("quintuples") and back, us
 - Invalid quintuples during decoding cause `decode` to return `None`.
 
 ## Status
-- Version: 0.1.1
+- Version: 0.1.2
 - Rust edition: 2024
 
 ## Why GCR (4-to-5)?
@@ -26,7 +26,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cbm-dos = "0.1.1"
+cbm-dos = "0.1.2"
 ```
 
 Then import in your code:
