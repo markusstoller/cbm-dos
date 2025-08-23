@@ -3,6 +3,8 @@ pub struct GCR {
     encode_mappings: [u8; 16], // Index by nibble 0..15, store 5-bit encoded value
 }
 
+const QUINTUPLE_SIZE: usize = 5;
+
 impl GCR {
     /// Constructs a new `GCR` (Group Code Recording) instance with precomputed
     /// lookup tables for efficient encoding and decoding operations.
@@ -73,125 +75,130 @@ impl GCR {
             decode_mappings[encoded as usize] = decoded;
             encode_mappings[decoded as usize] = encoded as u8;
         }
-        GCR { decode_mappings, encode_mappings }
+        GCR {
+            decode_mappings,
+            encode_mappings,
+        }
     }
 
-    /// Decodes a 64-bit encoded value into a `Vec<u8>` representing the original byte sequence.
+    /// Decodes a 40-bit encoded value into a vector of bytes (maximum 4 bytes).
     ///
-    /// This function interprets the provided encoded value as consisting of 8 5-bit "quintuples"
-    /// and converts them into 4 bytes of data using the `decode_mappings` array of the struct.
+    /// This function processes an encoded 40-bit quintuple value, where each 5-bit segment (quintuple)
+    /// translates to its corresponding decoded nibble using a precomputed `decode_mappings` array.
+    /// The function decodes 8 quintuples (2 per byte) and returns a `Vec<u8>` containing the resulting bytes.
     ///
-    /// # Parameters
-    /// - `encoded_value` (`u64`): The 64-bit value to decode, containing 8 5-bit encoded segments.
+    /// If any quintuple cannot be decoded (i.e., its mapping results in `0xFF`, which is treated as invalid),
+    /// the function returns `None`.
     ///
-    /// # Returns
-    /// - `Option<Vec<u8>>`: A `Vec<u8>` containing the decoded bytes if the input is valid, or `None`
-    ///   if any of the quintuples are invalid (i.e., mapped to `0xFF` in the `decode_mappings`).
+    /// ### Parameters
+    /// - `encoded_value (u64)`: The 40-bit value to decode. It should be properly aligned so that the relevant bits
+    ///   can be shifted and masked correctly during decoding.
     ///
-    /// # Details
-    /// - The function operates on 40 bits of input (8 quintuples of 5 bits each).
-    /// - For each quintuple:
-    ///   - It calculates the appropriate shift to extract the quintuple from the `encoded_value`.
-    ///   - It uses the `decode_mappings` array for direct lookup to map the quintuple to a 4-bit value.
-    /// - Decoding alternates between filling the high nibble and low nibble of a byte:
-    ///   - If the nibble is the high nibble, it gets shifted left and stored.
-    ///   - If the nibble is the low nibble, it gets combined with the high nibble to form a complete byte, which is appended to the result.
-    /// - If any quintuple decodes to `0xFF`, the function returns `None` (indicating an invalid encoding).
+    /// ### Returns
+    /// - `Option<Vec<u8>>`: A `Some` containing the decoded vector of up to 4 bytes if decoding is successful,
+    ///   or `None` if any quin-tuple is invalid.
     ///
-    /// # Memory Management
-    /// - The `Vec<u8>` result is pre-allocated with a capacity of 4 to match the exact number of decoded bytes.
+    /// ### Precondition
+    /// - The caller must ensure that the `self.decode_mappings` array is properly populated so that each 5-bit value
+    ///   (0 through 31) either maps to a valid 4-bit nibble or `0xFF` for invalid encodings.
     ///
-    /// # Example
+    /// ### Algorithm
+    /// - For each pair of consecutive quintuples (2 quintuples per iteration):
+    ///   1. Shift and mask the first quintuple from the encoded value.
+    ///   2. Look up its corresponding nibble in `decode_mappings`.
+    ///   3. Repeat for the second quintuple in the pair.
+    ///   4. If either quintuple mapping results in an invalid value (`0xFF`), terminate early and return `None`.
+    ///   5. Combine the two valid decoded nibbles into a single byte and append to the result.
+    ///
+    /// ### Example
     /// ```rust
-    /// let decoder = MyDecoderStruct {
-    ///     decode_mappings: [ /* array mapping 32 possible quintuples to decoded nibbles */ ],
-    /// };
-    /// let encoded_value = 0x1A2B3C4D5E; // Some encoded value
+    /// let decoder = MyDecoder::new();
+    /// let encoded_value: u64 = 0b11110_00001_11110_00001_11110_00001_11110_00001; // Example encoded value
     /// let decoded = decoder.decode_quintuple(encoded_value);
+    /// assert_eq!(decoded, Some(vec![0xF1, 0xF1, 0xF1, 0xF1])); // Decoding successful
     ///
-    /// match decoded {
-    ///     Some(bytes) => println!("Decoded bytes: {:?}", bytes),
-    ///     None => println!("Invalid encoding"),
-    /// }
+    /// let invalid_encoded_value: u64 = 0b11110_11110_11110_11110_11110_11110_11110_11111; // Invalid encoding
+    /// let decoded = decoder.decode_quintuple(invalid_encoded_value);
+    /// assert_eq!(decoded, None); // Decoding failed due to an invalid quintuple
     /// ```
+    ///
+    /// ### Notes
+    /// - The function uses a pre-allocated vector (`Vec`) with a capacity of 4 to maximize efficiency and prevent resizing.
+    /// - The function assumes `QUINTUPLE_SIZE` is defined as a constant equal to 5 (5 bits per quintuple).
+    /// - This function is particularly optimized for scenarios where the decoding process is executed frequently by utilizing
+    ///   direct array lookups rather than more expensive structures like `HashMap`.
     fn decode_quintuple(&self, encoded_value: u64) -> Option<Vec<u8>> {
         let mut result = Vec::with_capacity(4); // Pre-allocate exact capacity
-        let mut current_byte = 0u8;
-        let mut is_high_nibble = true; // Start with high nibble for correct order
 
         // Process 8 quintuples (40 bits total)
-        for j in 0..8 {
-            let shift_amount = 35 - j * 5; // Calculate shift for each quintuple
-            let quintuple_bits = ((encoded_value >> shift_amount) & 0x1f) as usize;
-
+        for j in (0..8).step_by(2) {
             // Direct array lookup instead of HashMap
-            let decoded_nibble = self.decode_mappings[quintuple_bits];
-
+            let decoded_nibble_high =
+                self.decode_mappings[((encoded_value >> 35 - j * QUINTUPLE_SIZE) & 0x1f) as usize];
+            // Direct array lookup instead of HashMap
+            let decoded_nibble_low = self.decode_mappings
+                [((encoded_value >> 35 - (j + 1) * QUINTUPLE_SIZE) & 0x1f) as usize];
             // Skip invalid encodings
-            if decoded_nibble == 0xFF {
+            if decoded_nibble_high == 0xFF || decoded_nibble_low == 0xFF {
                 return None;
             }
 
-            if is_high_nibble {
-                current_byte = decoded_nibble << 4;
-            } else {
-                current_byte |= decoded_nibble;
-                result.push(current_byte);
-                current_byte = 0;
-            }
-            is_high_nibble = !is_high_nibble;
+            result.push(decoded_nibble_high << 4 | decoded_nibble_low);
         }
 
         Some(result)
     }
 
-    /// Decodes the provided input byte slice (`value`) into a `Vec<u8>`.
+    /// Decodes a slice of bytes using a specific decoding logic implemented in conjunction with the `decode_quintuple` method.
     ///
-    /// The `decode` method processes the input in chunks of 5 bytes, converting each chunk into a
-    /// 64-bit integer by padding it with three leading zero bytes. It then calls the
-    /// `decode_quintuple` method to decode the chunk into a vector of bytes.
+    /// This method processes the given input slice `value`, dividing it into fixed-size chunks (of size `QUINTUPLE_SIZE`),
+    /// and applies decoding logic to each chunk. The decoded bytes are collected and returned as a `Vec<u8>`.
     ///
     /// # Parameters
-    /// - `value`: A reference to a slice of bytes (`&[u8]`) that represents the encoded input data.
-    ///            This slice must have a length that is a multiple of 5 for full decoding.
+    /// - `value`: A slice of bytes (`&[u8]`) that represents the encoded input to be decoded.
     ///
-    /// # Return
-    /// - Returns `Some(Vec<u8>)` if decoding is successful for all chunks.
-    /// - Returns `None` if any chunk fails to decode.
+    /// # Returns
+    /// - `Some(Vec<u8>)`: A `Vec<u8>` containing the decoded bytes, if decoding is successful.
+    /// - `None`: Returned if decoding fails for any of the data chunks.
+    ///
+    /// # Methodology
+    /// 1. The input slice `value` is iterated in fixed-size chunks. This is achieved using the `chunks_exact`
+    ///    method, which ensures efficient processing of chunks of size `QUINTUPLE_SIZE`.
+    /// 2. For each chunk, it is converted into a 64-bit integer by padding the upper 3 bytes with zeros.
+    /// 3. The method `decode_quintuple` (presumably implemented elsewhere in the code) is invoked with the 64-bit integer.
+    ///    - If `decode_quintuple` returns a valid result, the decoded data is appended to the result vector (`result`).
+    ///    - If `decode_quintuple` fails for any chunk, the function returns `None`.
+    /// 4. If all chunks are successfully decoded, the accumulated result is wrapped in `Some` and returned.
     ///
     /// # Example
     /// ```
-    /// let mut decoder = MyDecoder::new();
-    /// let input = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
-    /// if let Some(decoded) = decoder.decode(&input) {
-    ///     println!("Decoded output: {:?}", decoded);
+    /// let decoder = MyDecoder::new(); // Assuming a struct that implements the method
+    /// let encoded_data: &[u8] = &[/* encoded bytes */];
+    /// if let Some(decoded_data) = decoder.decode(encoded_data) {
+    ///     println!("Decoded data: {:?}", decoded_data);
     /// } else {
-    ///     eprintln!("Failed to decode input.");
+    ///     println!("Failed to decode the data.");
     /// }
     /// ```
     ///
-    /// # Notes
-    /// - This method uses `chunks_exact(5)` to divide the input into fixed-size chunks of 5.
-    /// - For each chunk, a `u64` is constructed by appending three leading zero bytes to the 5-byte chunk to
-    ///   match the byte size of a `u64`.
-    /// - It relies on the `decode_quintuple` method to handle the actual decoding logic for
-    ///   each chunk of reconstructed data. If `decode_quintuple` returns `None` for any chunk,
-    ///   the entire decoding fails and the method returns `None`.
+    /// # Note
+    /// The size of `QUINTUPLE_SIZE` and the implementation of the `decode_quintuple` method
+    /// are critical for the proper functionality of this method. Ensure these are defined
+    /// and implemented correctly in the same context.
     ///
-    /// # Panics
-    /// This method does not panic under normal operation. However, improper implementation of
-    /// `decode_quintuple` or incorrect input may result in unexpected behavior.
+    /// # Assumptions
+    /// - The `QUINTUPLE_SIZE` constant is defined and is less than or equal to 5.
+    /// - The `decode_quintuple` function is implemented to correctly decode a `u64` value into a `Vec<u8>`.
     pub fn decode(&self, value: &[u8]) -> Option<Vec<u8>> {
         let mut result: Vec<u8> = Vec::new();
         // Process chunks more efficiently using exact_chunks
-        for chunk in value.chunks_exact(5) {
+        for chunk in value.chunks_exact(QUINTUPLE_SIZE) {
             let final_value = u64::from_be_bytes([
                 0, 0, 0, // pad with zeros for the upper 3 bytes
                 chunk[0], chunk[1], chunk[2], chunk[3], chunk[4],
             ]);
 
             if let Some(res) = self.decode_quintuple(final_value) {
-                //println!("{:x?}", res);
                 result.extend(res);
             } else {
                 return None;
@@ -200,70 +207,118 @@ impl GCR {
         Some(result)
     }
 
-    /// Encodes a slice of bytes using a custom encoding scheme and returns the encoded data as a `Vec<u8>`.
+    /// Encodes a 4-byte sequence into a 40-bit number using predefined mappings.
     ///
-    /// This method processes the input data in chunks of 4 bytes at a time. For each chunk:
-    /// - Each byte is split into two 4-bit nibbles (high and low).
-    /// - These nibbles are then mapped to corresponding 5-bit encoded values using a predefined `encode_mappings` table.
-    /// - The 8 encoded nibbles (now 5-bit codes) are packed into a 40-bit value in a big-endian format.
-    /// - Finally, the 40-bit value is split into 5 bytes and appended to the output vector.
+    /// This function takes a reference to a slice of 4 bytes (`decoded_value`)
+    /// and encodes it into a `u64` (64-bit unsigned integer) using a provided
+    /// `encode_mappings` array. Each byte is split into two 4-bit halves, and
+    /// each half is converted into an encoded value based on the mapping table.
+    /// These encoded values are then combined into a single 64-bit value, with
+    /// each encoded value taking up a specific bit range in the result.
     ///
     /// # Parameters
-    /// - `value`: A slice of bytes (`&[u8]`) to be encoded.
+    /// - `decoded_value`: A reference to an array of 4 bytes to be encoded.
+    ///   The slice must be exactly 4 bytes long, or the behavior is undefined.
     ///
     /// # Returns
-    /// - `Vec<u8>`: A vector containing the encoded bytes.
+    /// - A `u64` value representing the encoded result of the given slice.
     ///
     /// # Panics
-    /// This function assumes that `self.encode_mappings` is properly defined (with valid mappings for all 4-bit values [0-15])
-    /// and does not perform boundary checks on its size. Providing an invalid or incorrectly sized mapping may result in undefined behavior.
+    /// - This function will not panic under normal operation as long as the
+    ///   `decoded_value` slice is exactly 4 bytes long and the indices used
+    ///   for `encode_mappings` are within bounds.
+    ///
+    /// # Assumptions
+    /// - `self.encode_mappings` is an array of values that maps 4-bit components
+    ///   (0 through 15) to their corresponding encoded values.
+    /// - The constant `QUINTUPLE_SIZE` determines the size of the bit shift
+    ///   and should align with the encoding rules.
+    ///
+    /// # Implementation Details
+    /// - Each byte in the `decoded_value` slice is divided into two 4-bit
+    ///   components:
+    ///   - The high nibble (upper 4 bits): `decoded_value[i] >> 4`
+    ///   - The low nibble (lower 4 bits): `decoded_value[i] & 0x0F`
+    /// - These components are looked up in `self.encode_mappings` to obtain
+    ///   their encoded values.
+    /// - The encoded values are right-shifted into their respective positions
+    ///   within the 64-bit result (`acc`), based on their sequence order.
     ///
     /// # Example
     /// ```rust
-    /// struct Encoder {
-    ///     encode_mappings: [u8; 16],
-    /// }
-    ///
-    /// let encoder = Encoder {
-    ///     encode_mappings: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-    /// };
-    /// let input = vec![0x12, 0x34, 0x56, 0x78];
-    /// let encoded = encoder.encode(&input);
-    /// println!("{:?}", encoded);
+    /// // Assuming `QUINTUPLE_SIZE` is defined and `self.encode_mappings` is
+    /// // already initialized correctly:
+    /// let decoded_data: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
+    /// let encoded_value = your_object.encode_quintuple(&decoded_data);
+    /// println!("Encoded Value: {:#X}", encoded_value);
     /// ```
     ///
-    /// # Notes
-    /// - The function processes the input in chunks of exactly 4 bytes. If the length of the input slice is not a multiple
-    ///   of 4, the remaining bytes will be ignored. It is the caller's responsibility to handle padding or provide properly-sized input.
+    /// # Output
+    /// - The function will return the encoded 40-bit value as part of a `u64`.
+    fn encode_quintuple(&self, decoded_value: &[u8]) -> u64 {
+        let mut acc: u64 = 0;
+
+        for i in 0..4 {
+            let shift_amount_high = 35 - ((i as u32) * (QUINTUPLE_SIZE * 2) as u32);
+            let shift_amount_low = shift_amount_high - QUINTUPLE_SIZE as u32;
+
+            acc |= (self.encode_mappings[(decoded_value[i] >> 4) as usize] as u64)
+                << shift_amount_high;
+            acc |= (self.encode_mappings[(decoded_value[i] & 0x0F) as usize] as u64)
+                << shift_amount_low;
+        }
+
+        acc
+    }
+
+    /// Encodes the input byte slice (`value`) into a custom encoding format.
+    ///
+    /// This function processes the input slice in chunks of 4 bytes, encoding each chunk into a new 5-byte segment
+    /// by delegating the operation to the `encode_quintuple` method. The resulting encoded chunks are concatenated
+    /// into a single vector of bytes.
+    ///
+    /// # Parameters
+    /// - `value`: A slice of bytes (`&[u8]`) representing the data to be encoded.
+    ///
+    /// # Returns
+    /// - `Vec<u8>`: A vector containing the concatenated encoding result of all 4-byte chunks, where each chunk is
+    ///   transformed into a 5-byte encoded segment.
+    ///
+    /// # Details
+    /// - The chunking is done using `chunks_exact(4)`, ensuring that only complete chunks of 4 bytes are processed.
+    ///   If `value`'s length is not a multiple of 4, the remainder is ignored.
+    /// - For each chunk, the `encode_quintuple` method is called to perform the encoding, returning an integer result
+    ///   that is then converted into its big-endian byte representation (`to_be_bytes`).
+    /// - Only the last 5 bytes of the big-endian representation are used (as the encoded quintuple is presumed to
+    ///   require 5 bytes), and these are added to the result vector efficiently using `extend_from_slice`.
+    ///
+    /// # Example
+    /// ```rust
+    /// let encoder = Encoder::new();
+    /// let input: &[u8] = &[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+    /// let output = encoder.encode(input);
+    ///
+    /// // The output will contain the encoded representation of the first 4 bytes
+    /// // and then process additional 4-byte chunks as applicable.
+    /// ```
+    ///
+    /// # Note
+    /// - `QUINTUPLE_SIZE` is assumed to be defined elsewhere in the module and represents the fixed size (5 bytes)
+    ///   of each encoded segment.
+    /// - The `encode_quintuple` method is expected to be implemented for the object type of `self` and should return
+    ///   an integer representing the encoded form of a 4-byte chunk.
+    ///
+    /// # Performance
+    /// - The `Vec::with_capacity` is preallocated based on the number of chunks and quintuple size to improve efficiency.
+    /// - This method disregards non-complete chunks (remainder of length % 4).
     pub fn encode(&self, value: &[u8]) -> Vec<u8> {
-        let mut result: Vec<u8> = Vec::new();
+        let num_chunks = value.len() / 4;
+        let mut result = Vec::with_capacity(num_chunks * QUINTUPLE_SIZE);
+
         for chunk in value.chunks_exact(4) {
-            // Prepare the 8 nibbles in the required order: high, low for each byte
-            let nibbles = [
-                chunk[0] >> 4,
-                chunk[0] & 0x0F,
-                chunk[1] >> 4,
-                chunk[1] & 0x0F,
-                chunk[2] >> 4,
-                chunk[2] & 0x0F,
-                chunk[3] >> 4,
-                chunk[3] & 0x0F,
-            ];
-
-            // Pack 8 quintuples (5-bit codes) into a 40-bit big-endian value
-            let mut acc: u64 = 0;
-            for (j, &nib) in nibbles.iter().enumerate() {
-                let code = self.encode_mappings[nib as usize] as u64;
-                let shift_amount = 35 - (j as u32) * 5;
-                acc |= code << shift_amount;
-            }
-
-            // Emit 5 bytes big-endian
-            result.push(((acc >> 32) & 0xFF) as u8);
-            result.push(((acc >> 24) & 0xFF) as u8);
-            result.push(((acc >> 16) & 0xFF) as u8);
-            result.push(((acc >> 8) & 0xFF) as u8);
-            result.push((acc & 0xFF) as u8);
+            let acc = self.encode_quintuple(chunk);
+            // Convert to bytes using to_be_bytes and extend efficiently
+            result.extend_from_slice(&acc.to_be_bytes()[3..]); // Take last 5 bytes
         }
         result
     }
