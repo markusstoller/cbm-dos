@@ -4,6 +4,8 @@ pub struct GCR {
 }
 
 const QUINTUPLE_SIZE: usize = 5;
+const TOTAL_BITS: usize = 40;
+const START_PT: usize = TOTAL_BITS - QUINTUPLE_SIZE;
 
 impl GCR {
     /// Constructs a new `GCR` (Group Code Recording) instance with precomputed
@@ -131,13 +133,14 @@ impl GCR {
         let mut result = Vec::with_capacity(4); // Pre-allocate exact capacity
 
         // Process 8 quintuples (40 bits total)
-        for j in (0..8).step_by(2) {
-            // Direct array lookup instead of HashMap
+        for j in 0..4 {
+            let shift_amount = START_PT - j * (QUINTUPLE_SIZE * 2);
+
             let decoded_nibble_high =
-                self.decode_mappings[((encoded_value >> 35 - j * QUINTUPLE_SIZE) & 0x1f) as usize];
-            // Direct array lookup instead of HashMap
+                self.decode_mappings[((encoded_value >> shift_amount) & 0x1f) as usize];
             let decoded_nibble_low = self.decode_mappings
-                [((encoded_value >> 35 - (j + 1) * QUINTUPLE_SIZE) & 0x1f) as usize];
+                [((encoded_value >> shift_amount - QUINTUPLE_SIZE) & 0x1f) as usize];
+
             // Skip invalid encodings
             if decoded_nibble_high == 0xFF || decoded_nibble_low == 0xFF {
                 return None;
@@ -259,13 +262,11 @@ impl GCR {
         let mut acc: u64 = 0;
 
         for i in 0..4 {
-            let shift_amount_high = 35 - ((i as u32) * (QUINTUPLE_SIZE * 2) as u32);
-            let shift_amount_low = shift_amount_high - QUINTUPLE_SIZE as u32;
+            let shift_amount = START_PT - i * QUINTUPLE_SIZE * 2;
 
-            acc |= (self.encode_mappings[(decoded_value[i] >> 4) as usize] as u64)
-                << shift_amount_high;
+            acc |= (self.encode_mappings[(decoded_value[i] >> 4) as usize] as u64) << shift_amount;
             acc |= (self.encode_mappings[(decoded_value[i] & 0x0F) as usize] as u64)
-                << shift_amount_low;
+                << (shift_amount - QUINTUPLE_SIZE);
         }
 
         acc
